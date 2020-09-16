@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"log"
 	"net/http"
+
 	"path/filepath"
 )
 
@@ -55,12 +56,15 @@ func applySecurityDefaults(req *v1beta1.AdmissionRequest) ([]patchOperation, err
 		return nil, nil
 	}
 
+	log.Printf("WE are HERE!!")
 	// Parse the Pod object.
 	raw := req.Object.Raw
 	pod := corev1.Pod{}
 	if _, _, err := universalDeserializer.Decode(raw, nil, &pod); err != nil {
 		return nil, fmt.Errorf("could not deserialize pod object: %v", err)
 	}
+
+	log.Printf("pod: %v\n", pod)
 
 	// Retrieve the `runAsNonRoot` and `runAsUser` values.
 	var runAsNonRoot *bool
@@ -70,24 +74,89 @@ func applySecurityDefaults(req *v1beta1.AdmissionRequest) ([]patchOperation, err
 		runAsUser = pod.Spec.SecurityContext.RunAsUser
 	}
 
+	// Chirico
+	nameTest := ""
+	if pod.Spec.Containers != nil {
+		log.Printf("\n\npod.Spec.Containers: %v\n", pod.Spec.Containers)
+		for _, v := range pod.Spec.Containers {
+
+			nameTest = v.Name
+			log.Printf("Name: %s", v.Name)
+			log.Printf("Image: %s", v.Image)
+			log.Printf("Ports: %s", v.Ports)
+		}
+	}
+
 	// Create patch operations to apply sensible defaults, if those options are not set explicitly.
 	var patches []patchOperation
 	if runAsNonRoot == nil {
-		patches = append(patches, patchOperation{
-			Op:    "add",
-			Path:  "/spec/securityContext/runAsNonRoot",
-			// The value must not be true if runAsUser is set to 0, as otherwise we would create a conflicting
-			// configuration ourselves.
-			Value: runAsUser == nil || *runAsUser != 0,
-		})
+		//patches = append(patches, patchOperation{
+		//	Op:   "add",
+		//	Path: "/spec/securityContext/runAsNonRoot",
+		//	// The value must not be true if runAsUser is set to 0, as otherwise we would create a conflicting
+		//	// configuration ourselves.
+		//	Value: runAsUser == nil || *runAsUser != 0,
+		//})
 
-		if runAsUser == nil {
+		if nameTest == "busybox" {
 			patches = append(patches, patchOperation{
 				Op:    "add",
-				Path:  "/spec/securityContext/runAsUser",
-				Value: 1234,
+				Path:  "/spec/containers",
+				Value: []string{},
 			})
+
+			type ipsObject struct {
+				Name            string   `json:"name"`
+				Image           string   `json:"image"`
+				ImagePullPolicy string   `json:"imagePullPolicy"`
+				Command         []string `json:"command"`
+				Args            []string `json:"args"`
+			}
+
+			patches = append(patches, patchOperation{
+				Op:   "add",
+				Path: "/spec/containers/-",
+				Value: ipsObject{Name: "ubuntu",
+					Image:           "ubuntu:latest",
+					ImagePullPolicy: "IfNotPresent",
+					Command:         []string{"/bin/bash", "-c", "--"},
+					Args:            []string{"apt-get update && apt-get -y upgrade && while true; do sleep 60; done;"},
+				},
+			})
+
+			patches = append(patches, patchOperation{
+				Op:   "add",
+				Path: "/spec/containers/-",
+				Value: ipsObject{Name: "ubuntu2",
+					Image:           "ubuntu:latest",
+					ImagePullPolicy: "IfNotPresent",
+					Command:         []string{"/bin/bash", "-c", "--"},
+					Args:            []string{"while true; do sleep 60; done;"},
+				},
+			})
+
+			patches = append(patches, patchOperation{
+				Op:   "add",
+				Path: "/spec/containers/-",
+				Value: ipsObject{Name: "ubuntu3",
+					Image:           "ubuntu:latest",
+					ImagePullPolicy: "IfNotPresent",
+					Command:         []string{"/bin/bash", "-c", "--"},
+					Args:            []string{"while true; do sleep 60; done;"},
+				},
+			})
+
 		}
+
+		//if runAsUser == nil {
+		//	patches = append(patches, patchOperation{
+		//		Op:    "add",
+		//		Path:  "/spec/securityContext/runAsUser",
+		//		Value: 1234,
+		//	})
+		//}
+		//
+
 	} else if *runAsNonRoot == true && (runAsUser != nil && *runAsUser == 0) {
 		// Make sure that the settings are not contradictory, and fail the object creation if they are.
 		return nil, errors.New("runAsNonRoot specified, but runAsUser set to 0 (the root user)")
@@ -100,6 +169,7 @@ func main() {
 	certPath := filepath.Join(tlsDir, tlsCertFile)
 	keyPath := filepath.Join(tlsDir, tlsKeyFile)
 
+	log.Printf("Starting...")
 	mux := http.NewServeMux()
 	mux.Handle("/mutate", admitFuncHandler(applySecurityDefaults))
 	server := &http.Server{

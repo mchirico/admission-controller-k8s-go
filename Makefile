@@ -16,7 +16,7 @@
 
 .DEFAULT_GOAL := docker-image
 
-IMAGE ?= stackrox/admission-controller-webhook-demo:latest
+IMAGE ?= stackrox/admission-controller-webhook-demo:v1
 
 image/webhook-server: $(shell find . -name '*.go')
 	CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o $@ ./cmd/webhook-server
@@ -24,6 +24,12 @@ image/webhook-server: $(shell find . -name '*.go')
 .PHONY: docker-image
 docker-image: image/webhook-server
 	docker build -t $(IMAGE) image/
+	kind load docker-image $(IMAGE)
+	kubectl delete -f deployment/pod.yaml
+	kubectl  apply -f deployment/pod.yaml 
+	kubectl delete -f examples/pod-with-defaults.yaml || true
+	sleep 4
+	kubectl apply -f examples/pod-with-defaults.yaml
 
 .PHONY: push-image
 push-image: docker-image
